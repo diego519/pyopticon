@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+src/pyopticon/__init__.py
+src/pyopticon.egg-info/PKG-INFO
+src/pyopticon.egg-info/SOURCES.txt
+src/pyopticon.egg-info/dependency_links.txt
+src/pyopticon.egg-info/top_level.txt
+src/pyopticon/data/earnings.py
+src/pyopticon/data/prices.py
+src/pyopticon/data/ticker.py
