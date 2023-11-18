@@ -1,4 +1,5 @@
 import pandas as pd
+import requests
 
 def earnings_data(ticker):
     url = f'https://finance.yahoo.com/calendar/earnings?symbol={ticker}'
