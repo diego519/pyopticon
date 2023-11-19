@@ -1,4 +1,5 @@
 import pandas as pd
+from datetime import date
 
 def base_data(risk_ticker = 'SPY', earnings = False):
 
