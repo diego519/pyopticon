@@ -1,8 +1,8 @@
 [project]
-name = "pyopticon"
+name = "optionlib"
 version = "0.0.1"
 authors = [
-  { name="Doug W" },
+  { name="Doug.Wynne" },
 ]
 description = "A package for working with options data"
 readme = "README.md"
@@ -14,5 +14,5 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/diego519/pyopticon"
-"Bug Tracker" = "https://github.com/diego519/pyopticon/issues"
+"Homepage" = "https://github.com/diego519/optionlib"
+"Bug Tracker" = "https://github.com/diego519/optionlib/issues"
