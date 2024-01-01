@@ -20,17 +20,27 @@ class Model():
             jobs_friday = lambda x: x.jobs_friday.rolling(horizon).max().shift(-horizon)
         )
         self.horizon = horizon
+        var_list = '|'.join([
+            'pct_delta_\d',
+            'shiller'
+            'T1',
+            'VIX',
+            'hv',
+            'Volume',
+            'jobs_friday',
+            'month'
+        ])
         
         if eval_date is None:
-            self.X = self.data.dropna().filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume|jobs_friday|month')
+            self.X = self.data.dropna().filter(regex = var_list)
             self.y = self.data.dropna()[['pct_delta_ahead']]
-            self.X_pred = self.data.filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume|jobs_friday|month').tail(1)
+            self.X_pred = self.data.filter(regex = var_list).tail(1)
         else:
-            self.X = self.data.dropna().filter(
-                regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume|jobs_friday'
-            ).iloc[:self.data.index.get_loc(eval_date) - horizon,:]
+            self.X = self.data.dropna().filter(regex = var_list).iloc[
+                :self.data.index.get_loc(eval_date) - horizon,:
+                ]
             self.y = self.data.loc[self.X.index,['pct_delta_ahead']]
-            self.X_pred = self.data.filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume|jobs_friday').loc[[eval_date],:]
+            self.X_pred = self.data.filter(regex = var_list).loc[[eval_date],:]
         
         horizon_range = pd.bdate_range(self.X_pred.index[0],periods = self.horizon+1)[1:]
         self.X_pred['jobs_friday'] = ((horizon_range.day<=7) & (horizon_range.day_of_week==4)).max().astype(int)
@@ -101,14 +111,17 @@ class Model():
             
             self.quantiles = quantiles[['observed','reweighted',]]
 
-def fit_historical_quantiles(horizon, data, cores = -1,path = None):
+def fit_historical_quantiles(horizon, data, cores = -1,path = None, dt_range = None):
     if path is None:
         path = f'horizon_{horizon}_adj_factor.csv'
+
+    if dt_range is None:
+        dt_range = model_obj.X.index
 
     output = dict()
     model_obj = Model(data.fillna(method = 'pad'),horizon)
 
-    for dt in tqdm(model_obj.X.index):
+    for dt in tqdm(dt_range):
         model_obj = Model(
             data.fillna(method = 'pad'),
             horizon,
