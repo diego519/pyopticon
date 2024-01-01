@@ -1,4 +1,5 @@
 import pandas as pd
+import requests
 
 def option_prices(ticker,date):
     timestamp_date = int(pd.to_datetime(date).timestamp())

@@ -2,6 +2,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from joblib import Parallel, delayed
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 
 class Model():
     '''Object for market prediction model'''
@@ -15,21 +16,25 @@ class Model():
                 ):
         
         self.data = base_data.assign(
-            pct_delta_ahead = lambda x: x.Close.pct_change(horizon).shift(-horizon)
+            pct_delta_ahead = lambda x: x.Close.pct_change(horizon).shift(-horizon),
+            jobs_friday = lambda x: x.jobs_friday.rolling(horizon).max().shift(-horizon)
         )
         self.horizon = horizon
         
         if eval_date is None:
-            self.X = self.data.dropna().filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume')
+            self.X = self.data.dropna().filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume|jobs_friday|month')
             self.y = self.data.dropna()[['pct_delta_ahead']]
-            self.X_pred = self.data.filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume').tail(1)
+            self.X_pred = self.data.filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume|jobs_friday|month').tail(1)
         else:
             self.X = self.data.dropna().filter(
-                regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume'
+                regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume|jobs_friday'
             ).iloc[:self.data.index.get_loc(eval_date) - horizon,:]
             self.y = self.data.loc[self.X.index,['pct_delta_ahead']]
-            self.X_pred = self.data.filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume').loc[[eval_date],:]
+            self.X_pred = self.data.filter(regex = 'pct_delta_\d|shiller|T1|VIX|hv|Volume|jobs_friday').loc[[eval_date],:]
         
+        horizon_range = pd.bdate_range(self.X_pred.index[0],periods = self.horizon+1)[1:]
+        self.X_pred['jobs_friday'] = ((horizon_range.day<=7) & (horizon_range.day_of_week==4)).max().astype(int)
+
         self.abs_y = abs_y
         self.earnings = earnings
         self.earnings_window = earnings_window
@@ -88,9 +93,29 @@ class Model():
             
             self.quantiles = quantiles[['observed','reweighted','reweighted_tails']]
             self.adj_factor = adj_factor
+            print('Adjustment factor:',round(adj_factor,4))
         else:
             quantiles = self.y.rename(columns = {'pct_delta_ahead':'observed'}).quantile(
                 [round(i,2) for i in np.linspace(0.01,.99,99)]
             ).join(qtile_model).rename(columns = {'model_qtiles':'reweighted'})
             
             self.quantiles = quantiles[['observed','reweighted',]]
+
+def fit_historical_quantiles(horizon, data, cores = -1,path = None):
+    if path is None:
+        path = f'horizon_{horizon}_adj_factor.csv'
+
+    output = dict()
+    model_obj = Model(data.fillna(method = 'pad'),horizon)
+
+    for dt in tqdm(model_obj.X.index):
+        model_obj = Model(
+            data.fillna(method = 'pad'),
+            horizon,
+            eval_date=dt
+        )
+        model_obj.fit_quantiles()
+        output[dt] = model_obj.adj_factor.copy()
+
+    output = pd.Series(output,name = f'adj_factor_{horizon}')
+    output.to_csv(path)

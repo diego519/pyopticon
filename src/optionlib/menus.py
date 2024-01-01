@@ -4,11 +4,11 @@ from .options import *
 from itertools import combinations
 
 class TradeMenu():
-    def __init__(self,prices,last_close,quantiles,bounds = (0,np.inf)):
-        self.prices = prices.loc[pd.IndexSlice[:,bounds[0]:bounds[1]],:]
+    def __init__(self,input_prices,last_close,quantiles,bounds = (0,np.inf)):
+        self.prices = input_prices.loc[pd.IndexSlice[:,bounds[0]:bounds[1]],:]
         self.last_close = last_close
-        self.prices_bid = prices.loc[prices.Bid.gt(0)]
-        self.prices_ask = prices.loc[prices.Ask.gt(0)]
+        self.prices_bid = self.prices.loc[self.prices.Bid.gt(0)]
+        self.prices_ask = self.prices.loc[self.prices.Ask.gt(0)]
         self.quantiles = quantiles
         self.options = self._create_options()
         self.menu = self._run_menu()
@@ -142,11 +142,11 @@ class TradeMenu():
             menu[('Butterfly spread',l,ATM,ATM,h)] = [opt.price,opt.payout]
         print('Spreads and straddles complete')
             
-        # Iron condors
+        # Iron condors/butterflies
         combos = [
             (pl,ph,cl,ch) for pl in self.options['puts']['buy'].keys()
             for ph in self.options['puts']['write'].keys() if ph > pl
-            for cl in self.options['calls']['write'].keys() if cl > ph
+            for cl in self.options['calls']['write'].keys() if cl >= ph
             for ch in self.options['calls']['buy'].keys() if ch > cl
             and self.options['puts']['buy'][pl].price 
              + self.options['puts']['write'][ph].price
@@ -164,22 +164,6 @@ class TradeMenu():
             ])
             menu[('Iron condor',pl,ph,cl,ch)] = [opt.price, opt.payout]
         print('Iron condors complete')
-                
-        # Iron butterflies
-        combos = [
-            (p,c) for p in self.options['puts']['buy'].keys() if p < ATM
-            for c in self.options['calls']['buy'].keys() if c > ATM
-        ]
-
-        for p,c in combos:
-            opt = OptionChain([
-                self.options['puts']['buy'][p],
-                self.options['puts']['write'][ATM],
-                self.options['calls']['write'][ATM],
-                self.options['calls']['buy'][c]
-            ])
-            menu[('Iron butterfly',p,ATM,ATM,c)] = [opt.price, opt.payout]
-        print('Iron butterflies complete')
             
         # Transform output and return                                       
         menu = pd.DataFrame.from_dict(
