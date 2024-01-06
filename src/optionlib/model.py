@@ -12,13 +12,15 @@ class Model():
                  abs_y = True,
                  earnings = None,
                  earnings_window = False,
-                 eval_date = None
+                 eval_date = None,
+                 jobs_friday_override = False
                 ):
         
         self.data = base_data.assign(
             pct_delta_ahead = lambda x: x.Close.pct_change(horizon).shift(-horizon),
             jobs_friday = lambda x: x.jobs_friday.rolling(horizon).max().shift(-horizon)
         )
+
         self.horizon = horizon
         var_list = '|'.join([
             'pct_delta_\d',
@@ -44,6 +46,9 @@ class Model():
         
         horizon_range = pd.bdate_range(self.X_pred.index[0],periods = self.horizon+1)[1:]
         self.X_pred['jobs_friday'] = ((horizon_range.day<=7) & (horizon_range.day_of_week==4)).max().astype(int)
+
+        if jobs_friday_override:
+            self.X_pred['jobs_friday'] = 1
 
         self.abs_y = abs_y
         self.earnings = earnings

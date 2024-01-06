@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from .options import *
 from itertools import combinations
+from joblib import Parallel, delayed
 
 class TradeMenu():
     def __init__(self,input_prices,last_close,quantiles,bounds = (0,np.inf)):
@@ -40,19 +41,19 @@ class TradeMenu():
     def _run_menu(self):
         
         strikes = self.prices.index.get_level_values('Strike').unique()
-        menu = dict()
+        menu_dict = dict()
         i = abs(np.asarray(list(strikes)) - self.last_close).argmin()
         ATM = np.asarray(list(strikes))[i]
 
         # Covered calls
         for i in self.options['calls']['write'].keys():
             opt = self.options['calls']['write'][i]
-            menu[('covered call',i,None,None,None)] = [opt.price, opt.payout]
+            menu_dict[('covered call',i,None,None,None)] = [opt.price, opt.payout]
 
         # Written puts
         for i in self.options['puts']['write'].keys():
             opt = self.options['puts']['write'][i]
-            menu[('cash covered put',i,None,None,None)] = [opt.price,opt.payout]
+            menu_dict[('cash covered put',i,None,None,None)] = [opt.price,opt.payout]
         print('Write strategies complete')
             
         # Bull call spreads
@@ -66,7 +67,7 @@ class TradeMenu():
                 self.options['calls']['buy'][i],
                 self.options['calls']['write'][j]
             ])
-            menu[('Bull call spread',i,j,None,None)] = [
+            menu_dict[('Bull call spread',i,j,None,None)] = [
                 opt.price,opt.payout
             ]
             
@@ -81,7 +82,7 @@ class TradeMenu():
                 self.options['calls']['buy'][i],
                 self.options['calls']['write'][j]
             ])
-            menu[('Bear call spread',i,j,None,None)] = [
+            menu_dict[('Bear call spread',i,j,None,None)] = [
                 opt.price,opt.payout
             ]
         
@@ -96,7 +97,7 @@ class TradeMenu():
                 self.options['puts']['buy'][i],
                 self.options['puts']['write'][j]
             ])
-            menu[('Bear put spread',i,j,None,None)] = [
+            menu_dict[('Bear put spread',i,j,None,None)] = [
                 opt.price,opt.payout
             ]
         
@@ -111,7 +112,7 @@ class TradeMenu():
                 self.options['puts']['buy'][i],
                 self.options['puts']['write'][j]
             ])
-            menu[('Bull put spread',i,j,None,None)] = [
+            menu_dict[('Bull put spread',i,j,None,None)] = [
                 opt.price,opt.payout
             ]
             
@@ -122,9 +123,12 @@ class TradeMenu():
                 self.options['puts']['buy'][s],
                 self.options['calls']['buy'][s]
             ])
-            menu[('Long straddle',s,None,None,None)] = [
+            menu_dict[('Long straddle',s,None,None,None)] = [
                 opt.price,opt.payout
             ]
+        
+        # Long strangle
+        # To be implemented...
         
         # Butterfly spreads
         combos = [
@@ -139,10 +143,11 @@ class TradeMenu():
                 self.options['calls']['write'][ATM],
                 self.options['calls']['buy'][h]
             ])
-            menu[('Butterfly spread',l,ATM,ATM,h)] = [opt.price,opt.payout]
+            menu_dict[('Butterfly spread',l,ATM,ATM,h)] = [opt.price,opt.payout]
         print('Spreads and straddles complete')
             
         # Iron condors/butterflies
+        print(f'Calculating {len(combos)} Iron Condors...')
         combos = [
             (pl,ph,cl,ch) for pl in self.options['puts']['buy'].keys()
             for ph in self.options['puts']['write'].keys() if ph > pl
@@ -153,21 +158,69 @@ class TradeMenu():
              + self.options['calls']['write'][cl].price 
              + self.options['calls']['buy'][ch].price < 0
         ]
-        print(f'Calculating {len(combos)} Iron Condors...')
 
-        for pl,ph,cl,ch in combos:
+        reverse_combos = [
+            (pl,ph,cl,ch) for pl in self.options['puts']['write'].keys()
+            for ph in self.options['puts']['buy'].keys() if ph > pl
+            for cl in self.options['calls']['buy'].keys() if cl >= ph
+            for ch in self.options['calls']['write'].keys() if ch > cl
+            and self.options['puts']['write'][pl].price 
+             + self.options['puts']['buy'][ph].price
+             + self.options['calls']['buy'][cl].price 
+             + self.options['calls']['write'][ch].price < 0
+        ]
+
+        def iron_condor(pl,ph,cl,ch):
+            
+            ic_dict = dict()
+            
             opt = OptionChain([
                 self.options['puts']['buy'][pl],
                 self.options['puts']['write'][ph],
                 self.options['calls']['write'][cl],
                 self.options['calls']['buy'][ch],
             ])
-            menu[('Iron condor',pl,ph,cl,ch)] = [opt.price, opt.payout]
+            ic_dict[('Iron condor',pl,ph,cl,ch)] = [opt.price, opt.payout]
+            
+            return ic_dict
+        
+        def reverse_iron_condor(pl,ph,cl,ch):
+            
+            ic_dict = dict()
+
+            opt = OptionChain([
+                self.options['puts']['write'][pl],
+                self.options['puts']['buy'][ph],
+                self.options['calls']['buy'][cl],
+                self.options['calls']['write'][ch],
+            ])
+            ic_dict[('Reverse iron condor',pl,ph,cl,ch)] = [opt.price, opt.payout]
+            
+            return ic_dict
+
+        ic_dict_full = Parallel(
+            n_jobs = -1, 
+            verbose = 3,
+            prefer = 'threads'
+        )(delayed(iron_condor)(pl,ph,cl,ch) for pl,ph,cl,ch in combos)
+        
+        for i in ic_dict_full:
+            menu_dict.update(i)
+
+        ric_dict_full = Parallel(
+            n_jobs = -1, 
+            verbose = 3,
+            prefer = 'threads'
+        )(delayed(reverse_iron_condor)(pl,ph,cl,ch) for pl,ph,cl,ch in reverse_combos)
+
+        for i in ric_dict_full:
+            menu_dict.update(i)
+            
         print('Iron condors complete')
             
         # Transform output and return                                       
         menu = pd.DataFrame.from_dict(
-            menu,
+            menu_dict,
             orient = 'index',
             columns = ['cost','quantiles']
         ).assign(

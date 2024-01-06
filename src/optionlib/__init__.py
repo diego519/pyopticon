@@ -4,5 +4,6 @@ __all__ = [
     'data',
     'menus',
     'model',
-    'options'
+    'options',
+    'floating_quantile'
 ]
