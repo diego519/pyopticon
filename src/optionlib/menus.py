@@ -42,18 +42,21 @@ class TradeMenu():
         
         strikes = self.prices.index.get_level_values('Strike').unique()
         menu_dict = dict()
+        payout_dict = dict()
         i = abs(np.asarray(list(strikes)) - self.last_close).argmin()
         ATM = np.asarray(list(strikes))[i]
 
         # Covered calls
         for i in self.options['calls']['write'].keys():
             opt = self.options['calls']['write'][i]
-            menu_dict[('covered call',i,None,None,None)] = [opt.price, opt.payout]
+            menu_dict[('covered call',i,None,None,None)] = opt.price
+            payout_dict[('covered call',i,None,None,None)] = opt.payout
 
         # Written puts
         for i in self.options['puts']['write'].keys():
             opt = self.options['puts']['write'][i]
-            menu_dict[('cash covered put',i,None,None,None)] = [opt.price,opt.payout]
+            menu_dict[('cash covered put',i,None,None,None)] = opt.price
+            payout_dict[('cash covered put',i,None,None,None)] = opt.payout
         print('Write strategies complete')
             
         # Bull call spreads
@@ -67,9 +70,9 @@ class TradeMenu():
                 self.options['calls']['buy'][i],
                 self.options['calls']['write'][j]
             ])
-            menu_dict[('Bull call spread',i,j,None,None)] = [
-                opt.price,opt.payout
-            ]
+            menu_dict[('Bull call spread',i,j,None,None)] = opt.price
+            payout_dict[('Bull call spread',i,j,None,None)] = opt.payout
+            
             
         # Bear call spreads
         combos = [
@@ -82,9 +85,8 @@ class TradeMenu():
                 self.options['calls']['buy'][i],
                 self.options['calls']['write'][j]
             ])
-            menu_dict[('Bear call spread',i,j,None,None)] = [
-                opt.price,opt.payout
-            ]
+            menu_dict[('Bear call spread',i,j,None,None)] = opt.price
+            payout_dict[('Bear call spread',i,j,None,None)] = opt.payout
         
         # Bear put spreads
         combos = [
@@ -97,9 +99,8 @@ class TradeMenu():
                 self.options['puts']['buy'][i],
                 self.options['puts']['write'][j]
             ])
-            menu_dict[('Bear put spread',i,j,None,None)] = [
-                opt.price,opt.payout
-            ]
+            menu_dict[('Bear put spread',i,j,None,None)] = opt.price
+            payout_dict[('Bear put spread',i,j,None,None)] = opt.payout
         
         # Bull put spreads
         combos = [
@@ -112,9 +113,8 @@ class TradeMenu():
                 self.options['puts']['buy'][i],
                 self.options['puts']['write'][j]
             ])
-            menu_dict[('Bull put spread',i,j,None,None)] = [
-                opt.price,opt.payout
-            ]
+            menu_dict[('Bull put spread',i,j,None,None)] = opt.price
+            payout_dict[('Bull put spread',i,j,None,None)] = opt.payout
             
         # Long straddles
         combos = (self.options['puts']['buy'].keys() & self.options['calls']['buy'].keys())
@@ -123,9 +123,8 @@ class TradeMenu():
                 self.options['puts']['buy'][s],
                 self.options['calls']['buy'][s]
             ])
-            menu_dict[('Long straddle',s,None,None,None)] = [
-                opt.price,opt.payout
-            ]
+            menu_dict[('Long straddle',s,None,None,None)] = opt.price
+            payout_dict[('Long straddle',s,None,None,None)] = opt.payout
         
         # Long strangle
         # To be implemented...
@@ -143,7 +142,9 @@ class TradeMenu():
                 self.options['calls']['write'][ATM],
                 self.options['calls']['buy'][h]
             ])
-            menu_dict[('Butterfly spread',l,ATM,ATM,h)] = [opt.price,opt.payout]
+
+            menu_dict[('Butterfly spread',l,ATM,ATM,h)] = opt.price
+            payout_dict[('Butterfly spread',l,ATM,ATM,h)] = opt.payout
         print('Spreads and straddles complete')
             
         # Iron condors/butterflies
@@ -181,7 +182,7 @@ class TradeMenu():
                 self.options['calls']['buy'][ch],
             ])
             ic_dict[('Iron condor',pl,ph,cl,ch)] = [opt.price, opt.payout]
-            
+
             return ic_dict
         
         def reverse_iron_condor(pl,ph,cl,ch):
@@ -198,44 +199,55 @@ class TradeMenu():
             
             return ic_dict
 
-        ic_dict_full = Parallel(
+        ic_full = Parallel(
             n_jobs = -1, 
             verbose = 3,
             prefer = 'threads'
         )(delayed(iron_condor)(pl,ph,cl,ch) for pl,ph,cl,ch in combos)
         
-        for i in ic_dict_full:
-            menu_dict.update(i)
+        for i in ic_full:
+            key = list(i.keys())[0]
+            menu_dict[key] = i[key][0]
+            payout_dict[key] = i[key][1]
 
-        ric_dict_full = Parallel(
+        ric_full = Parallel(
             n_jobs = -1, 
             verbose = 3,
             prefer = 'threads'
         )(delayed(reverse_iron_condor)(pl,ph,cl,ch) for pl,ph,cl,ch in reverse_combos)
 
-        for i in ric_dict_full:
-            menu_dict.update(i)
+        for i in ric_full:
+            key = list(i.keys())[0]
+            menu_dict[key] = i[key][0]
+            payout_dict[key] = i[key][1]
             
         print('Iron condors complete')
             
-        # Transform output and return                                       
-        menu = pd.DataFrame.from_dict(
+        # Transform output and return       
+        self.quantiles = pd.DataFrame.from_dict(
+            payout_dict,
+            orient = 'index'
+        )
+
+        self.menu = pd.DataFrame.from_dict(
             menu_dict,
             orient = 'index',
-            columns = ['cost','quantiles']
+            columns = ['cost']
         ).assign(
-            EV = lambda x: x.quantiles.apply(lambda y: y.sum()),
+            EV = self.quantiles.sum(1),
             E_pct = lambda x: (x.EV/x.cost).mask(x.cost.lt(0),np.nan),
-            win_pct = lambda x: [i.gt(0).mean() for i in x.quantiles],
-            E_win = lambda x: [i[i.gt(0)].multiply(100).mean() for i in x.quantiles],
-            E_loss = lambda x: [i[i.le(0)].multiply(-100).mean() for i in x.quantiles],
-            kelly_criteria = lambda x: x.win_pct - (
+            win_pct = self.quantiles.gt(0).mean(1),
+            E_win = self.quantiles.where(self.quantiles.gt(0)).mean(1).multiply(100),
+            E_loss = self.quantiles.where(self.quantiles.lt(0)).mean(1).multiply(100),
+            max_loss = self.quantiles.min(1),
+            kelly_criteria_E_loss = lambda x: x.win_pct - (
                 x.win_pct.add(-1).multiply(-1)/(x.E_win/x.E_loss)
+            ),
+            kelly_criteria_max_loss = lambda x: x.win_pct - (
+                x.win_pct.add(-1).multiply(-1)/(x.E_win/x.max_loss)
             )
         )
-        menu.index = pd.MultiIndex.from_tuples(
-            menu.index,
+        self.menu.index = pd.MultiIndex.from_tuples(
+            self.menu.index,
             names = ['strategy','leg_1','leg_2','leg_3','leg_4']
         )
-        
-        return(menu)
