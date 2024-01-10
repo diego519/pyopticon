@@ -5,38 +5,49 @@ from itertools import combinations
 from joblib import Parallel, delayed
 
 class TradeMenu():
-    def __init__(self,input_prices,last_close,quantiles,bounds = (0,np.inf)):
+    def __init__(self,
+                 input_prices,
+                 last_close,
+                 quantiles,
+                 bankroll = 6e4,
+                 bounds = (0,np.inf),
+                 midpoint_price = False):
+        
         self.prices = input_prices.loc[pd.IndexSlice[:,bounds[0]:bounds[1]],:]
         self.last_close = last_close
-        self.prices_bid = self.prices.loc[self.prices.Bid.gt(0)]
-        self.prices_ask = self.prices.loc[self.prices.Ask.gt(0)]
+        self.prices_bid = self.prices.loc[self.prices['Midpoint' if midpoint_price else 'Bid'].gt(0)]
+        self.prices_ask = self.prices.loc[self.prices['Midpoint' if midpoint_price else 'Bid'].gt(0)]
         self.quantiles = quantiles
-        self.options = self._create_options()
-        self.menu = self._run_menu()
+        self.midpoint_price = midpoint_price
+        self.bankroll = bankroll
+        self._create_options()
+        self._run_menu()
 
     def _create_options(self):
         options = {
             o:{j:dict() for j in ['write','buy']}
             for o in ['calls','puts']
         }
-        
+
         for o,s in self.prices_bid.index:
+            price = 'Midpoint' if self.midpoint_price else 'Bid'
             if o == 'P':
                 options['puts']['write'][s] = Option.write_put(
-                    s,self.prices_bid.loc[(o,s),'Bid'],self.last_close,self.quantiles)
+                    s,self.prices_bid.loc[(o,s),price],self.last_close,self.quantiles)
             elif o == 'C':
                 options['calls']['write'][s] = Option.write_call(
-                    s,self.prices_bid.loc[(o,s),'Bid'],self.last_close,self.quantiles)
+                    s,self.prices_bid.loc[(o,s),price],self.last_close,self.quantiles)
         
         for o,s in self.prices_ask.index:
+            price = 'Midpoint' if self.midpoint_price else 'Ask'
             if o == 'P':
                 options['puts']['buy'][s] = Option.buy_put(
-                    s,self.prices_ask.loc[(o,s),'Ask'],self.last_close,self.quantiles)
+                    s,self.prices_ask.loc[(o,s),price],self.last_close,self.quantiles)
             elif o == 'C':
                 options['calls']['buy'][s] = Option.buy_call(
-                    s,self.prices_ask.loc[(o,s),'Ask'],self.last_close,self.quantiles)
-                
-        return(options)
+                    s,self.prices_ask.loc[(o,s),price],self.last_close,self.quantiles)
+                    
+        self.options = options
 
     def _run_menu(self):
         
@@ -148,7 +159,7 @@ class TradeMenu():
         print('Spreads and straddles complete')
             
         # Iron condors/butterflies
-        print(f'Calculating {len(combos)} Iron Condors...')
+        
         combos = [
             (pl,ph,cl,ch) for pl in self.options['puts']['buy'].keys()
             for ph in self.options['puts']['write'].keys() if ph > pl
@@ -165,10 +176,6 @@ class TradeMenu():
             for ph in self.options['puts']['buy'].keys() if ph > pl
             for cl in self.options['calls']['buy'].keys() if cl >= ph
             for ch in self.options['calls']['write'].keys() if ch > cl
-            and self.options['puts']['write'][pl].price 
-             + self.options['puts']['buy'][ph].price
-             + self.options['calls']['buy'][cl].price 
-             + self.options['calls']['write'][ch].price < 0
         ]
 
         def iron_condor(pl,ph,cl,ch):
@@ -198,10 +205,11 @@ class TradeMenu():
             ic_dict[('Reverse iron condor',pl,ph,cl,ch)] = [opt.price, opt.payout]
             
             return ic_dict
-
+        
+        print(f'Calculating {len(combos)} Iron Condors...')
         ic_full = Parallel(
             n_jobs = -1, 
-            verbose = 3,
+            verbose = 1,
             prefer = 'threads'
         )(delayed(iron_condor)(pl,ph,cl,ch) for pl,ph,cl,ch in combos)
         
@@ -210,9 +218,10 @@ class TradeMenu():
             menu_dict[key] = i[key][0]
             payout_dict[key] = i[key][1]
 
+        print(f'Calculating {len(reverse_combos)} Reverse Iron Condors...')
         ric_full = Parallel(
             n_jobs = -1, 
-            verbose = 3,
+            verbose = 1,
             prefer = 'threads'
         )(delayed(reverse_iron_condor)(pl,ph,cl,ch) for pl,ph,cl,ch in reverse_combos)
 
@@ -221,7 +230,7 @@ class TradeMenu():
             menu_dict[key] = i[key][0]
             payout_dict[key] = i[key][1]
             
-        print('Iron condors complete')
+        print('Iron condors complete. Transforming payout quantiles...')
             
         # Transform output and return       
         self.quantiles = pd.DataFrame.from_dict(
@@ -229,23 +238,43 @@ class TradeMenu():
             orient = 'index'
         )
 
+        kelly_range = [round(j,2) for j in np.arange(0.1,1,0.05)]
+
+        self.EV_harmonic = pd.DataFrame(
+            index = self.quantiles.index,
+            columns = kelly_range
+        )
+
+        for k in kelly_range:
+            contracts = self.quantiles.min(1).multiply(1e4).apply(
+                lambda x: np.floor(self.bankroll*k/-min(x,-1))
+            )
+
+            self.EV_harmonic.loc[:,k] = \
+                self.quantiles.multiply(contracts*1e4,axis = 0)\
+                .div(self.bankroll)\
+                .add(1)\
+                .cumprod(axis = 1)\
+                .iloc[:,-1]**(1/99)
+
+        print('Calculating payout characteristics')
         self.menu = pd.DataFrame.from_dict(
             menu_dict,
             orient = 'index',
             columns = ['cost']
         ).assign(
-            EV = self.quantiles.sum(1),
-            E_pct = lambda x: (x.EV/x.cost).mask(x.cost.lt(0),np.nan),
+            EV_arithmetic = self.quantiles.sum(1),
+            E_pct = lambda x: (x.EV_arithmetic/x.cost).mask(x.cost.lt(0),np.nan),
             win_pct = self.quantiles.gt(0).mean(1),
             E_win = self.quantiles.where(self.quantiles.gt(0)).mean(1).multiply(100),
             E_loss = self.quantiles.where(self.quantiles.lt(0)).mean(1).multiply(100),
-            max_loss = self.quantiles.min(1),
-            kelly_criteria_E_loss = lambda x: x.win_pct - (
-                x.win_pct.add(-1).multiply(-1)/(x.E_win/x.E_loss)
-            ),
-            kelly_criteria_max_loss = lambda x: x.win_pct - (
+            max_loss = self.quantiles.min(1).multiply(100),
+            # Kelly criteria using E_loss results in many values > 100%, max_loss behaves rationally
+            kelly_criteria = lambda x: min(x.win_pct - (
                 x.win_pct.add(-1).multiply(-1)/(x.E_win/x.max_loss)
-            )
+            ),1),
+            EV_harmonic = self.EV_harmonic.max(axis = 1),
+            kelly_criteria_EV_harmonic = self.EV_harmonic.idxmax(axis = 1)
         )
         self.menu.index = pd.MultiIndex.from_tuples(
             self.menu.index,
