@@ -36,7 +36,8 @@ def base_data(risk_ticker = 'SPY', earnings = False):
 
     pe.columns = ['shiller_pe']
 
-    spread_url_csv = 'https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=968&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=T10Y2Y&scale=left&cosd=1976-06-01&coed=2024-02-23&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Daily&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2024-02-23&revision_date=2024-02-23&nd=1976-06-01'
+    spread_url_csv = 'https://fred.stlouisfed.org/graph/fredgraph.csv?mode=fred&id=T10Y2Y&vintage_date=2024-01-13&revision_date=2024-01-13&nd=1954-07-01'
+    T10Y_url_csv = 'https://fred.stlouisfed.org/graph/fredgraph.csv?mode=fred&id=DGS10&vintage_date=2024-01-13&revision_date=2024-01-13&nd=1954-07-01'
 
     spread = pd.read_csv(spread_url_csv).rename(
         columns={'DATE':'Date'}
@@ -44,15 +45,29 @@ def base_data(risk_ticker = 'SPY', earnings = False):
         Date = lambda x: pd.to_datetime(x.Date)
     ).set_index('Date').replace('.',np.nan).astype(float)
 
-    data = data_price.join(pe).join(spread).join(data_vix).assign(
+    T10Y = pd.read_csv(T10Y_url_csv).rename(
+        columns={'DATE':'Date'}
+    ).assign(
+        Date = lambda x: pd.to_datetime(x.Date)
+    ).set_index('Date').replace('.',np.nan).astype(float)
+
+    data = data_price.join(pe).join(spread).join(T10Y).join(data_vix).assign(
         shiller_pe = lambda x: x.shiller_pe.fillna(method = 'ffill')
     )
 
     data.index = pd.to_datetime(data.index)
 
-    data = data.assign(
-        jobs_friday = lambda x: ((x.index.day <=7) & (x.index.day_of_week == 4)).astype(int),
-        month = lambda x: x.index.month.astype('category')
+    jobs_report = pd.read_excel(
+        'https://alfred.stlouisfed.org/release/downloaddates?rid=50&ff=xls',
+        skiprows=34,
+        usecols=[0]
+    ).dropna().rename(
+        columns = {'Release Dates:':'Date'}
+    ).assign(jobs_friday = 1).set_index('Date')
+
+    data = data.join(jobs_report).assign(
+        month = lambda x: x.index.month.astype('category'),
+        jobs_friday = lambda x: x.jobs_friday.fillna(0)
     )
 
     return(data)

@@ -3,6 +3,7 @@ import numpy as np
 from .options import *
 from itertools import combinations
 from joblib import Parallel, delayed
+from plotly import express as px
 
 class TradeMenu():
     def __init__(self,
@@ -269,10 +270,6 @@ class TradeMenu():
             E_win = self.quantiles.where(self.quantiles.gt(0)).mean(1).multiply(100),
             E_loss = self.quantiles.where(self.quantiles.lt(0)).mean(1).multiply(100),
             max_loss = self.quantiles.min(1).multiply(100),
-            # Kelly criteria using E_loss results in many values > 100%, max_loss behaves rationally
-            kelly_criteria = lambda x: min(x.win_pct - (
-                x.win_pct.add(-1).multiply(-1)/(x.E_win/x.max_loss)
-            ),1),
             EV_harmonic = self.EV_harmonic.max(axis = 1),
             kelly_criteria_EV_harmonic = self.EV_harmonic.idxmax(axis = 1)
         )
@@ -280,3 +277,73 @@ class TradeMenu():
             self.menu.index,
             names = ['strategy','leg_1','leg_2','leg_3','leg_4']
         )
+
+    def kelly_criteria(self,
+                       strategy,
+                       leg_1,
+                       leg_2,
+                       leg_3,
+                       leg_4,
+                       bankroll = 6e4,
+                       iterations = 1000,
+                       time = 50):
+        
+        menu_slice = self.quantiles.loc[pd.IndexSlice[strategy,leg_1,leg_2,leg_3,leg_4],:].T
+
+        value_at_risk = [round(i,2) for i in np.arange(0.1,1,0.05)]
+        max_loss = menu_slice.min()*1e4
+        max_gain = menu_slice.max()*1e4
+
+        def kelly_sim(n):
+            outcome = pd.DataFrame(index = range(time+1),columns = value_at_risk)
+            outcome.loc[:,'payouts'] = menu_slice.sample(time+1,replace = True).values
+            outcome.loc[0,:] = bankroll
+
+            for j in value_at_risk:
+                for i in outcome.index[1:]:
+                    if outcome.loc[i-1,j]*j/(-max_loss) < 0:
+                        outcome.loc[i,j] = 0
+                    else:
+                        outcome.loc[i,j] = np.max([
+                            outcome.loc[i-1,j] 
+                            + round(outcome.loc[i-1,j]*j/(-max_loss),0)
+                            * outcome.loc[i,'payouts']*10000,
+                            0
+                        ])
+                        
+            return (n,outcome.loc[time,:].drop(columns = 'payouts'))
+
+        sims = Parallel(n_jobs=-1,verbose = 5)(delayed(kelly_sim)(i) for i in range(iterations))
+
+        kc_output = pd.DataFrame(index = range(iterations),columns = value_at_risk)
+        for i,j in sims:
+            kc_output.loc[i,:] = j
+
+
+        x_var_name = f'Median outcome at t={time} with {iterations} iterations'
+        y_var_name = 'Probability of loss'
+        kelly_curve = pd.DataFrame().from_dict({
+            x_var_name:kc_output.median(),
+            y_var_name:kc_output.lt(bankroll).mean()
+        })
+
+        px.line(
+            kelly_curve,
+            x = x_var_name,
+            y = y_var_name,
+            hover_name=kc_output.columns,
+            markers=True
+        ).show()
+
+        px.box(
+            kc_output,
+            log_y = True,
+            height = 600,
+            title = 'Distribution of ending values'
+        ).show()
+
+        print(pd.DataFrame().from_dict({'Kelly':value_at_risk}).assign(
+            Contracts = lambda x: np.floor(bankroll*x.Kelly/(-max_loss)),
+            Max_loss = lambda x: max_loss*x.Contracts,
+            Max_gain = lambda x: round(max_gain*x.Contracts,2)
+        ).set_index('Kelly'))

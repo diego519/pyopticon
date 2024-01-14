@@ -3,6 +3,7 @@ from joblib import Parallel, delayed
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+from plotly import express as px
 
 class Model():
     '''Object for market prediction model'''
@@ -116,6 +117,45 @@ class Model():
             
             self.quantiles = quantiles[['observed','reweighted',]]
 
+    def VIX_diagnostic(self,
+                       adj_factor_history,
+                       cutoff_date):
+         
+        adj_factor_df = adj_factor_history.join(
+            self.y.abs().rename(columns={'pct_delta_ahead':'pct_delta_ahead_abs'})
+        ).join(
+            self.X.VIX
+        ).join(self.y).loc[cutoff_date:].assign(
+            log_delta = lambda x: np.log(x.pct_delta_ahead_abs*100)
+        )
+
+        print('Correlation matrix:',adj_factor_df.corr())
+
+        px.scatter(
+            adj_factor_df,
+            x = 'VIX',
+            y = 'pct_delta_ahead_abs',
+            title = f'VIX vs. absolute returns over {self.horizon} days',
+            hover_name = adj_factor_df.index
+        ).show()
+
+        px.scatter(
+            adj_factor_df,
+            x = 'quantile_backtest',
+            y = 'pct_delta_ahead_abs',
+            title = f'Adjustment factor vs. absolute returns over {self.horizon} days',
+            hover_name = adj_factor_df.index
+        ).show()
+
+        px.scatter(
+            adj_factor_df,
+            x = 'quantile_backtest',
+            y = 'VIX',
+            color = 'log_delta',
+            hover_name = adj_factor_df.index
+        )
+
+
 def fit_historical_quantiles(horizon, data, cores = -1,path = None, dt_range = None):
     if path is None:
         path = f'horizon_{horizon}_adj_factor.csv'
@@ -132,7 +172,7 @@ def fit_historical_quantiles(horizon, data, cores = -1,path = None, dt_range = N
             horizon,
             eval_date=dt
         )
-        model_obj.fit_quantiles()
+        model_obj.fit_quantiles(cores = cores)
         output[dt] = model_obj.adj_factor.copy()
 
     output = pd.Series(output,name = f'adj_factor_{horizon}')
