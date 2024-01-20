@@ -40,3 +40,11 @@ def fidelity_option_prices(file_path = '../Option Chain_ Fidelity Investments.ht
     )
 
     return prices
+
+def CBOE_option_prices(filepath,date):
+
+    prices = pd.read_parquet(filepath)
+
+    prices.set_index('strike')
+
+    return prices

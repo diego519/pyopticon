@@ -52,7 +52,8 @@ def base_data(risk_ticker = 'SPY', earnings = False):
     ).set_index('Date').replace('.',np.nan).astype(float)
 
     data = data_price.join(pe).join(spread).join(T10Y).join(data_vix).assign(
-        shiller_pe = lambda x: x.shiller_pe.fillna(method = 'ffill')
+        shiller_pe = lambda x: x.shiller_pe.ffill(),
+        DGS10 = lambda x: x.DGS10.ffill()
     )
 
     data.index = pd.to_datetime(data.index)
