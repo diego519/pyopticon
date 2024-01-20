@@ -17,11 +17,14 @@ class Model():
                  jobs_friday_override = False
                 ):
         
+        self.abs_y = abs_y
+        self.earnings = earnings
+        self.earnings_window = earnings_window
+
         self.data = base_data.assign(
             pct_delta_ahead = lambda x: x.Close.pct_change(horizon).shift(-horizon),
             jobs_friday = lambda x: x.jobs_friday.rolling(horizon).max().shift(-horizon)
         )
-
         self.horizon = horizon
         var_list = '|'.join([
             'pct_delta_\d',
@@ -39,9 +42,9 @@ class Model():
             self.y = self.data.dropna()[['pct_delta_ahead']]
             self.X_pred = self.data.filter(regex = var_list).tail(1)
         else:
-            self.X = self.data.dropna().filter(regex = var_list).iloc[
-                :self.data.index.get_loc(eval_date) - horizon,:
-                ]
+            self.X = self.data.filter(regex = var_list).iloc[
+                :self.data.index.get_loc(eval_date) - horizon + 1,:
+                ].dropna()
             self.y = self.data.loc[self.X.index,['pct_delta_ahead']]
             self.X_pred = self.data.filter(regex = var_list).loc[[eval_date],:]
         
@@ -50,10 +53,6 @@ class Model():
 
         if jobs_friday_override:
             self.X_pred['jobs_friday'] = 1
-
-        self.abs_y = abs_y
-        self.earnings = earnings
-        self.earnings_window = earnings_window
         
         if self.earnings is not None:
             self.X = self.X.join(earnings)
@@ -161,14 +160,13 @@ def fit_historical_quantiles(horizon, data, cores = -1,path = None, dt_range = N
         path = f'horizon_{horizon}_adj_factor.csv'
 
     if dt_range is None:
-        dt_range = model_obj.X.index
+        dt_range = data.X.index
 
     output = dict()
-    model_obj = Model(data.fillna(method = 'pad'),horizon)
 
     for dt in tqdm(dt_range):
         model_obj = Model(
-            data.fillna(method = 'pad'),
+            data.ffill(),
             horizon,
             eval_date=dt
         )
