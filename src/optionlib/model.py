@@ -98,15 +98,10 @@ class Model():
             )
 
             quantiles = qtile_obs.assign(
-                temp = lambda x: (x.observed/x.observed.abs()).fillna(1),
-                temp1 = lambda x: x.temp/x.temp.shift(1),
-                temp2 = lambda x: x.index.where(x.observed.lt(0))/x.temp1.idxmin(),
-                temp3 = lambda x: (x.index.where(x.observed.ge(0))*-1+1)/(1-x.temp1.idxmin()),
-                reweighted = lambda x: (x.temp2.mask(x.temp2.isna(),x.temp3)*(adj_factor-1)+1)*x.observed,
                 reweighted_tails = lambda x: x.observed*adj_factor
             )
             
-            self.quantiles = quantiles[['observed','reweighted','reweighted_tails']]
+            self.quantiles = quantiles[['observed','reweighted_tails']]
             self.adj_factor = adj_factor
             print('Adjustment factor:',round(adj_factor,4))
         else:

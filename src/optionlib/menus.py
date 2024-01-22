@@ -21,10 +21,7 @@ class TradeMenu():
         self.quantiles = quantiles
         self.midpoint_price = midpoint_price
         self.bankroll = bankroll
-        self._create_options()
-        self._run_menu()
 
-    def _create_options(self):
         options = {
             o:{j:dict() for j in ['write','buy']}
             for o in ['calls','puts']
@@ -47,10 +44,100 @@ class TradeMenu():
             elif o == 'C':
                 options['calls']['buy'][s] = Option.buy_call(
                     s,self.prices_ask.loc[(o,s),price],self.last_close,self.quantiles)
-                    
+                
         self.options = options
 
-    def _run_menu(self):
+    def iron_condors(self):
+        menu_dict = dict()
+        payout_dict = dict()
+
+        # Iron condors/butterflies
+        
+        combos = [
+            (pl,ph,cl,ch) for pl in self.options['puts']['buy'].keys()
+            for ph in self.options['puts']['write'].keys() if ph > pl
+            for cl in self.options['calls']['write'].keys() if cl >= ph
+            for ch in self.options['calls']['buy'].keys() if ch > cl
+            and self.options['puts']['buy'][pl].price 
+             + self.options['puts']['write'][ph].price
+             + self.options['calls']['write'][cl].price 
+             + self.options['calls']['buy'][ch].price < 0
+        ]
+
+        def iron_condor(pl,ph,cl,ch):
+            
+            ic_dict = dict()
+            
+            opt = OptionChain([
+                self.options['puts']['buy'][pl],
+                self.options['puts']['write'][ph],
+                self.options['calls']['write'][cl],
+                self.options['calls']['buy'][ch],
+            ])
+            ic_dict[('Iron condor',pl,ph,cl,ch)] = [opt.price, opt.payout]
+
+            return ic_dict
+        
+        print(f'Calculating {len(combos)} Iron Condors...')
+        ic_full = Parallel(
+            n_jobs = -1, 
+            verbose = 1,
+            prefer = 'threads'
+        )(delayed(iron_condor)(pl,ph,cl,ch) for pl,ph,cl,ch in combos)
+        
+        for i in ic_full:
+            key = list(i.keys())[0]
+            menu_dict[key] = i[key][0]
+            payout_dict[key] = i[key][1]
+            
+        print('Iron condors complete. Transforming payout quantiles...')
+            
+        # Transform output and return       
+        self.quantiles = pd.DataFrame.from_dict(
+            payout_dict,
+            orient = 'index'
+        )
+
+        kelly_range = [round(j,2) for j in np.arange(0.1,1,0.05)]
+
+        self.EV_harmonic = pd.DataFrame(
+            index = self.quantiles.index,
+            columns = kelly_range
+        )
+
+        for k in kelly_range:
+            contracts = self.quantiles.min(1).multiply(1e4).apply(
+                lambda x: np.floor(self.bankroll*k/-min(x,-1))
+            )
+
+            self.EV_harmonic.loc[:,k] = \
+                self.quantiles.multiply(contracts*1e4,axis = 0)\
+                .div(self.bankroll)\
+                .add(1)\
+                .cumprod(axis = 1)\
+                .iloc[:,-1]**(1/99)
+
+        print('Calculating payout characteristics')
+        self.menu = pd.DataFrame.from_dict(
+            menu_dict,
+            orient = 'index',
+            columns = ['cost']
+        ).assign(
+            EV_arithmetic = self.quantiles.sum(1),
+            E_pct = lambda x: (x.EV_arithmetic/x.cost).mask(x.cost.lt(0),np.nan),
+            win_pct = self.quantiles.gt(0).mean(1),
+            E_win = self.quantiles.where(self.quantiles.gt(0)).mean(1).multiply(100),
+            E_loss = self.quantiles.where(self.quantiles.lt(0)).mean(1).multiply(100),
+            max_loss = self.quantiles.min(1).multiply(100),
+            EV_harmonic = self.EV_harmonic.max(axis = 1),
+            kelly_criteria_EV_harmonic = self.EV_harmonic.idxmax(axis = 1)
+        )
+        self.menu.index = pd.MultiIndex.from_tuples(
+            self.menu.index,
+            names = ['strategy','leg_1','leg_2','leg_3','leg_4']
+        )
+
+    def run_menu(self):
         
         strikes = self.prices.index.get_level_values('Strike').unique()
         menu_dict = dict()
