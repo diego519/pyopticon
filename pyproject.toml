@@ -1,6 +1,6 @@
 [project]
 name = "optionlib"
-version = "0.0.4"
+version = "0.1.0"
 authors = [
   { name="Doug.Wynne" },
 ]
@@ -16,3 +16,9 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/diego519/optionlib"
 "Bug Tracker" = "https://github.com/diego519/optionlib/issues"
+
+[build-system]
+requires = ["setuptools", "setuptools_scm[toml]>=6.2", "wheel"]
+
+[tool.setuptools.packages.find]
+include = ["optionlib*"]
