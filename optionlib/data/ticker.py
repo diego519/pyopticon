@@ -2,6 +2,13 @@ import pandas as pd
 from datetime import date
 import numpy as np
 
+def price_data(ticker = 'SPY'):
+    end_ts = int(pd.to_datetime(date.today()+pd.Timedelta(1,unit = 'd')).timestamp())
+    query_str = f'https://query1.finance.yahoo.com/v7/finance/download/{ticker}?period1=728265600&period2={end_ts}&interval=1d&events=history&includeAdjustedClose=true'
+
+    data_price_raw = pd.read_csv(query_str).assign(Date = lambda x: pd.to_datetime(x.Date)).set_index('Date')
+    return data_price_raw
+
 def base_data(risk_ticker = 'SPY', earnings = False):
 
     end_ts = int(pd.to_datetime(date.today()+pd.Timedelta(1,unit = 'd')).timestamp())
